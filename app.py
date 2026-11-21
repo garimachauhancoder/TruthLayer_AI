@@ -2,16 +2,19 @@
 
 import os
 import hashlib
+import textwrap
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 import pandas as pd
 import pymupdf
 import streamlit as st
 
-from pdf_processor import extract_text_from_pdf, PDFProcessingError
+from pdf_processor import extract_text_from_pdf
 from claim_extractor import extract_claims
 from fact_checker import verify_claims_batch
 from pdf_highlighter import annotate_problematic_claims, render_pdf_page
+from web_search import search_web_query
+from report_generator import generate_factcheck_pdf, report_filename
 
 # Page configuration
 st.set_page_config(
@@ -73,7 +76,7 @@ st.markdown("""
         letter-spacing: -0.02em;
     }
     .top-search-pill {
-        display: flex;
+        display: none;
         align-items: center;
         gap: 0.65rem;
         background: #f8fafc !important;
@@ -521,6 +524,60 @@ navbar_html = '''<div class="top-navbar">
 
 st.markdown(navbar_html, unsafe_allow_html=True)
 
+with st.form("live_web_search_form", clear_on_submit=False):
+    search_col, button_col = st.columns([6, 1], vertical_alignment="bottom")
+    with search_col:
+        web_query = st.text_input(
+            "Search the live web",
+            placeholder="Search the web for a topic, fact, or source...",
+            label_visibility="collapsed",
+        )
+    with button_col:
+        web_search_submitted = st.form_submit_button(
+            "Search web",
+            icon=":material/search:",
+            type="primary",
+            width="stretch",
+        )
+
+if web_search_submitted:
+    if not tavily_api_key:
+        st.session_state["web_search_result"] = {
+            "query": web_query,
+            "error": "Tavily API key is not configured. Add TAVILY_API_KEY to .env and restart the app.",
+        }
+    elif not web_query.strip():
+        st.session_state["web_search_result"] = {"query": "", "error": "Enter a query to search the web."}
+    else:
+        with st.spinner("Searching the live web..."):
+            try:
+                search_output = search_web_query(web_query, tavily_api_key=tavily_api_key)
+                st.session_state["web_search_result"] = search_output.to_dict()
+            except Exception as exc:
+                st.session_state["web_search_result"] = {"query": web_query, "error": str(exc)}
+
+web_search_output = st.session_state.get("web_search_result")
+if web_search_output:
+    if web_search_output.get("error"):
+        st.error(f"Web search failed: {web_search_output['error']}")
+    else:
+        st.markdown(f"#### Live results for: {web_search_output.get('query', '')}")
+        if web_search_output.get("warnings"):
+            st.warning("Some search sources did not respond: " + "; ".join(web_search_output["warnings"]))
+        for source in web_search_output.get("source_details", []):
+            title = " ".join((source.get("title") or source.get("url")).split())
+            short_title = textwrap.shorten(title, width=100, placeholder="…")
+            st.link_button(short_title, source["url"], icon=":material/open_in_new:", width="content")
+            pub_date = source.get("published_date") or "Publication date not provided by search source"
+            topics = " + ".join(source.get("search_topics", []))
+            st.caption(f"{pub_date} · {topics} search")
+            if source.get("excerpt"):
+                excerpt = " ".join(source["excerpt"].split())
+                st.text(textwrap.shorten(excerpt, width=220, placeholder="…"))
+                if len(excerpt) > 220:
+                    with st.expander("Read more"):
+                        st.text(excerpt)
+
 
 # --- Sidebar Navigation & Controls ---
 st.sidebar.markdown("""
@@ -550,7 +607,7 @@ max_claims_setting = st.sidebar.slider(
 )
 
 if st.sidebar.button("🔄 Reset / Clear Session"):
-    for k in ["results", "claims", "doc_name", "pdf_bytes", "active_doc_digest", "highlighted_pdf_bytes", "highlight_summary", "highlight_error"]:
+    for k in ["results", "claims", "doc_name", "sample_doc_name", "pdf_bytes", "active_doc_digest", "highlighted_pdf_bytes", "highlight_summary", "highlight_error", "report_pdf_bytes", "report_pdf_error", "document_audits", "document_audit_errors", "selected_audit_id"]:
         if k in st.session_state:
             del st.session_state[k]
     st.rerun()
@@ -578,41 +635,27 @@ if not has_ai or not tavily_api_key:
 col_upload, col_demo = st.columns([3, 1])
 
 with col_upload:
-    uploaded_file = st.file_uploader(
+    uploaded_files = st.file_uploader(
         "Drop files here. Get extracted claims, live search verification, and audit reports with exact citations.",
         type=["pdf"],
-        help="Upload any text-based PDF file."
+        accept_multiple_files=True,
+        help="Upload one or more text-based PDF files."
     )
 
 with col_demo:
     st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
     if st.button("⚡ Try Sample Document", help="Click to load a pre-built 2-page tech & financial intelligence document"):
         st.session_state["pdf_bytes"] = generate_sample_pdf()
-        st.session_state["doc_name"] = "Sample_AI_Market_Briefing_2024.pdf"
+        st.session_state["sample_doc_name"] = "Sample_AI_Market_Briefing_2024.pdf"
         st.toast("Sample PDF loaded! Click 'Analyze Document' below.", icon="📄")
 
-# Set active document source
-active_pdf_data = None
-active_doc_name = None
-active_pdf_bytes = None
-
-if uploaded_file is not None:
-    active_pdf_data = uploaded_file
-    active_pdf_bytes = uploaded_file.getvalue()
-    active_doc_name = uploaded_file.name
-    st.session_state["doc_name"] = uploaded_file.name
-elif "pdf_bytes" in st.session_state and st.session_state["pdf_bytes"]:
-    active_pdf_data = st.session_state["pdf_bytes"]
-    active_pdf_bytes = bytes(active_pdf_data)
-    active_doc_name = st.session_state.get("doc_name", "sample_document.pdf")
-
-if active_pdf_bytes is not None:
-    active_doc_digest = hashlib.sha256(active_pdf_bytes).hexdigest()
-    if st.session_state.get("active_doc_digest") != active_doc_digest:
-        for key in ["results", "claims", "highlighted_pdf_bytes", "highlight_summary", "highlight_error"]:
-            st.session_state.pop(key, None)
-        st.session_state["active_doc_digest"] = active_doc_digest
-
+# Keep every selected PDF together with its original bytes for its own audit and report.
+active_documents = []
+if uploaded_files:
+    for uploaded_pdf in uploaded_files:
+        active_documents.append((uploaded_pdf.name, uploaded_pdf.getvalue()))
+elif st.session_state.get("pdf_bytes"):
+    active_documents.append((st.session_state.get("sample_doc_name", "sample_document.pdf"), bytes(st.session_state["pdf_bytes"])))
 
 # --- WHAT HAPPENS TO YOUR DOCUMENTS (Feature Cards) ---
 st.markdown('<div class="section-eyebrow">WHAT HAPPENS TO YOUR DOCUMENTS</div>', unsafe_allow_html=True)
@@ -664,86 +707,106 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# --- Action & Execution Banner ---
-if active_pdf_data is not None:
-    st.markdown("<br>", unsafe_allow_html=True)
-    doc_size_display = ""
-    if hasattr(active_pdf_data, "size"):
-        doc_size_display = f"&bull; {round(active_pdf_data.size / 1024, 1)} KB"
-    elif isinstance(active_pdf_data, (bytes, bytearray)):
-        doc_size_display = f"&bull; {round(len(active_pdf_data) / 1024, 1)} KB (Interactive Demo)"
+# --- Multi-document audit action ---
+if active_documents:
+    st.markdown("### PDFs selected for audit")
+    for file_name, file_bytes in active_documents:
+        st.caption(f"{file_name} · {len(file_bytes) / 1024:.1f} KB")
 
-    st.markdown(f"""
-    <div style="background:#ffffff; border:1px solid #e2e8f0; border-radius:14px; padding:1.1rem 1.5rem; display:flex; align-items:center; justify-content:space-between; margin-bottom:1.2rem; box-shadow:0 1px 3px rgba(0,0,0,0.02);">
-        <div style="display:flex; align-items:center; gap:0.9rem;">
-            <span style="font-size:2rem;">📄</span>
-            <div>
-                <div style="font-weight:700; color:#0f172a !important; font-size:1.02rem;">{active_doc_name}</div>
-                <div style="font-size:0.83rem; color:#475569 !important;">Ready for automated multi-step verification {doc_size_display}</div>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    can_run_batch = bool(gemini_api_key and tavily_api_key)
+    run_batch_audit = st.button(
+        f"Analyze and audit {len(active_documents)} PDF(s)",
+        type="primary",
+        disabled=not can_run_batch,
+    )
+    if not can_run_batch:
+        st.info("Configure both Gemini and Tavily API keys to run an audit.")
 
-    can_run = bool(gemini_api_key and tavily_api_key)
-    run_audit_btn = st.button("🚀 Analyze & Audit Document", type="primary", disabled=not can_run)
-
-    if not can_run:
-        st.info("⚠️ Please ensure a Gemini API key and Tavily search key are provided to start the audit.")
-
-    if run_audit_btn:
-        try:
-            with st.status("Auditing document with TruthLayer AI...", expanded=True) as status_box:
-                # Step 1: Text extraction
-                st.write("📄 **Step 1/3:** Extracting text page-by-page via PyMuPDF...")
-                pages = extract_text_from_pdf(active_pdf_data)
-                st.write(f"✓ Successfully extracted text across **{len(pages)}** document page(s).")
-
-                # Step 2: Claim extraction
-                st.write("🧠 **Step 2/3:** Extracting checkable factual assertions with Gemini 2.5 Flash...")
-                claims = extract_claims(
-                    pages=pages,
-                    gemini_api_key=gemini_api_key,
-                    max_claims=max_claims_setting
-                )
-
-                if not claims:
-                    status_box.update(label="No checkable claims detected", state="error")
-                    st.error("No factual claims (statistics, dates, financial, or technical assertions) were found in this document.")
-                    st.stop()
-
-                st.write(f"✓ Extracted **{len(claims)}** distinct verifiable claims with page citations.")
-
-                # Step 3: Web search & verification
-                st.write("🌐 **Step 3/3:** Querying live web via Tavily and evaluating evidence with Gemini...")
-                results = verify_claims_batch(
-                    claims=claims,
-                    gemini_api_key=gemini_api_key,
-                    tavily_api_key=tavily_api_key
-                )
-
-                status_box.update(label="Audit Completed Successfully!", state="complete")
-
-            st.session_state["results"] = results
-            st.session_state["claims"] = claims
-            st.session_state.pop("highlighted_pdf_bytes", None)
-            st.session_state.pop("highlight_summary", None)
-            st.session_state.pop("highlight_error", None)
+    if run_batch_audit:
+        audits = dict(st.session_state.get("document_audits", {}))
+        audit_errors = {}
+        for file_name, file_bytes in active_documents:
+            audit_id = hashlib.sha256(file_name.encode("utf-8") + b"\0" + file_bytes).hexdigest()
             try:
-                highlighted_pdf, highlight_summary = annotate_problematic_claims(active_pdf_bytes, results)
-                st.session_state["highlighted_pdf_bytes"] = highlighted_pdf
-                st.session_state["highlight_summary"] = highlight_summary
-            except Exception as highlight_exc:
-                st.session_state["highlight_error"] = str(highlight_exc)
+                with st.status(f"Auditing {file_name}...", expanded=False) as status_box:
+                    pages = extract_text_from_pdf(file_bytes)
+                    claims = extract_claims(
+                        pages=pages,
+                        gemini_api_key=gemini_api_key,
+                        max_claims=max_claims_setting,
+                    )
+                    if not claims:
+                        audit_errors[file_name] = "No checkable claims were extracted."
+                        status_box.update(label=f"No claims found in {file_name}", state="error")
+                        continue
+                    results = verify_claims_batch(
+                        claims=claims,
+                        gemini_api_key=gemini_api_key,
+                        tavily_api_key=tavily_api_key,
+                    )
+                    status_box.update(label=f"Audit complete: {file_name}", state="complete")
+                highlighted_pdf = None
+                highlight_summary = {"details": [], "unmatched": [], "pages": []}
+                highlight_error = ""
+                try:
+                    highlighted_pdf, highlight_summary = annotate_problematic_claims(file_bytes, results)
+                except Exception as exc:
+                    highlight_error = str(exc)
+                report_pdf = None
+                report_error = ""
+                try:
+                    report_pdf = generate_factcheck_pdf(results, file_name)
+                except Exception as exc:
+                    report_error = str(exc)
+                audits[audit_id] = {
+                    "document_name": file_name,
+                    "pdf_bytes": file_bytes,
+                    "claims": claims,
+                    "results": results,
+                    "highlighted_pdf_bytes": highlighted_pdf,
+                    "highlight_summary": highlight_summary,
+                    "report_pdf_bytes": report_pdf,
+                    "highlight_error": highlight_error,
+                    "report_pdf_error": report_error,
+                }
+            except Exception as exc:
+                audit_errors[file_name] = str(exc)
 
-        except PDFProcessingError as pdf_err:
-            st.error(f"❌ PDF Processing Error: {pdf_err}")
-        except Exception as exc:
-            st.error(f"❌ Verification Pipeline Error: {exc}")
+        st.session_state["document_audits"] = audits
+        st.session_state["document_audit_errors"] = audit_errors
+        if audits:
+            st.success("PDF processing finished. Select an audited document below to view its results.")
 
+# Choose one audited PDF at a time so claim pages, annotations, and exports remain document-specific.
+document_audits = st.session_state.get("document_audits", {})
+for failed_name, error in st.session_state.get("document_audit_errors", {}).items():
+    st.error(f"{failed_name}: {error}")
+
+if document_audits:
+    audit_ids = list(document_audits)
+    selected_audit_id = st.selectbox(
+        "View results for",
+        audit_ids,
+        format_func=lambda audit_id: f"{document_audits[audit_id]['document_name']} ({len(document_audits[audit_id]['results'])} claims)",
+        key="selected_audit_id",
+    )
+    selected_audit = document_audits[selected_audit_id]
+    st.session_state["results"] = selected_audit["results"]
+    st.session_state["claims"] = selected_audit["claims"]
+    st.session_state["doc_name"] = selected_audit["document_name"]
+    if selected_audit.get("highlighted_pdf_bytes") is not None:
+        st.session_state["highlighted_pdf_bytes"] = selected_audit["highlighted_pdf_bytes"]
+    else:
+        st.session_state.pop("highlighted_pdf_bytes", None)
+    st.session_state["highlight_summary"] = selected_audit["highlight_summary"]
+    st.session_state["report_pdf_bytes"] = selected_audit["report_pdf_bytes"]
+    st.session_state["highlight_error"] = selected_audit.get("highlight_error", "")
+    st.session_state["report_pdf_error"] = selected_audit.get("report_pdf_error", "")
+elif not st.session_state.get("results"):
+    st.session_state.pop("results", None)
 
 # --- Results & Audit Intelligence Dashboard ---
-if "results" in st.session_state and st.session_state["results"]:
+if document_audits and st.session_state.get("results"):
     results = st.session_state["results"]
     claims = st.session_state.get("claims", [])
     doc_name = st.session_state.get("doc_name", "Document")
@@ -885,6 +948,8 @@ if "results" in st.session_state and st.session_state["results"]:
                     """, unsafe_allow_html=True)
 
                 st.markdown(f"**Verification Rationale:**\n{r.get('explanation', 'No detailed rationale available.')}")
+                if r.get("search_warnings"):
+                    st.warning("Search was partial: " + "; ".join(r["search_warnings"]))
 
                 sources = r.get("sources", [])
                 st.markdown("**🔗 Verified Evidence Sources:**")
@@ -897,8 +962,10 @@ if "results" in st.session_state and st.session_state["results"]:
                         title = detail.get("title") or get_domain_from_url(url)
                         pub_date = detail.get("published_date") or "Publication date unavailable"
                         angles = detail.get("evidence_angles", [])
+                        topics = detail.get("search_topics", [])
                         angle_label = f" · {' + '.join(a.title() for a in angles)} search" if angles else ""
-                        st.markdown(f"- [{title}]({url}) · {pub_date}{angle_label}")
+                        topic_label = f" · {' + '.join(t.title() for t in topics)} index" if topics else ""
+                        st.markdown(f"- [{title}]({url}) · {pub_date}{angle_label}{topic_label}")
                 else:
                     st.caption("No authoritative sources found for this assertion.")
 
@@ -940,8 +1007,10 @@ if "results" in st.session_state and st.session_state["results"]:
                 title = source.get("title") or get_domain_from_url(src)
                 pub_date = source.get("published_date") or "Publication date unavailable"
                 angles = source.get("evidence_angles", [])
+                topics = source.get("search_topics", [])
                 angle_label = f" · {' + '.join(a.title() for a in angles)} search" if angles else ""
-                st.markdown(f"**{s_idx}.** [{title}]({src}) · {pub_date}{angle_label}")
+                topic_label = f" · {' + '.join(t.title() for t in topics)} index" if topics else ""
+                st.markdown(f"**{s_idx}.** [{title}]({src}) · {pub_date}{angle_label}{topic_label}")
         else:
             st.info("No external source URLs were retrieved for this document.")
 
@@ -960,10 +1029,15 @@ if "results" in st.session_state and st.session_state["results"]:
                 "Audit Status": r["status"],
                 "Correct Information": r.get("correct_fact", "N/A"),
                 "Explanation": r.get("explanation", ""),
+                "Search Warnings": " | ".join(r.get("search_warnings", [])),
                 "Sources": " | ".join(r.get("sources", [])),
                 "Source Details": " | ".join(
-                    f"{s.get('title') or s.get('url')} — {s.get('published_date') or 'Publication date unavailable'} — {' + '.join(s.get('evidence_angles', [])) or 'unclassified'}"
+                    f"{s.get('title') or s.get('url')} — {s.get('published_date') or 'Publication date unavailable'} — {' + '.join(s.get('evidence_angles', [])) or 'unclassified'} — {' + '.join(s.get('search_topics', [])) or 'general'}"
                     for s in r.get("source_details", [])
+                ),
+                "Evidence Excerpts": " | ".join(
+                    f"{s.get('title') or s.get('url')}: {s.get('excerpt', '')}"
+                    for s in r.get("source_details", []) if s.get("excerpt")
                 )
             }
             for i, r in enumerate(results, start=1)
@@ -973,9 +1047,28 @@ if "results" in st.session_state and st.session_state["results"]:
         st.download_button(
             label="📥 Download Full CSV Audit Report",
             data=csv_bytes,
-            file_name=f"truthlayer_audit_{doc_name}.csv",
+            file_name=report_filename(doc_name, "csv"),
             mime="text/csv"
         )
+        report_pdf_bytes = st.session_state.get("report_pdf_bytes")
+        report_pdf_error = st.session_state.get("report_pdf_error")
+        if report_pdf_bytes is None and not report_pdf_error:
+            try:
+                report_pdf_bytes = generate_factcheck_pdf(results, doc_name)
+                st.session_state["report_pdf_bytes"] = report_pdf_bytes
+            except Exception as report_exc:
+                report_pdf_error = str(report_exc)
+
+        if report_pdf_bytes is not None:
+            st.download_button(
+                label="Download PDF report",
+                data=report_pdf_bytes,
+                file_name=report_filename(doc_name, "pdf"),
+                mime="application/pdf",
+                icon=":material/picture_as_pdf:",
+            )
+        else:
+            st.error(f"Could not generate the PDF report: {report_pdf_error}")
 
     st.markdown("### Highlighted PDF review")
     st.caption("Red marks False claims. Amber marks Inaccurate claims. Annotations in the downloaded PDF include the claim number and page.")
