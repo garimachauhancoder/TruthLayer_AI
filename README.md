@@ -10,10 +10,12 @@ The application helps users identify potentially inaccurate information, validat
 ## 🚀 Key Features
 
 - **PDF Document Processing:** Extracts text from PDF documents page by page using PyMuPDF.
-- **AI-Powered Claim Extraction:** Uses Google Gemini to identify checkable claims, including statistics, dates, financial figures, and technical information.
+- **AI-Powered Claim Extraction:** Uses Google Gemini to identify checkable claims, including statistics, dates, financial figures, and technical information. Each result retains the exact original sentence and its validated PDF page number alongside the concise claim used for checking.
 - **Real-Time Evidence Search:** Uses Tavily Search API to retrieve relevant web evidence for individual claims.
+- **Two-Sided Search and Publication Dates:** Searches each claim for both supporting and contradicting evidence, and displays the publication date returned by Tavily when available. Missing dates are identified as unavailable.
 - **Automated Fact Verification:** Evaluates retrieved evidence using Gemini and generates an appropriate verdict.
 - **Source Attribution:** Displays supporting source links and original PDF page references.
+- **Problematic Claim Highlighting:** Adds red PDF annotations to claims marked False and amber annotations to claims marked Inaccurate. The app previews affected pages, identifies claim numbers and page numbers, and provides a downloadable annotated PDF.
 - **Interactive Analytics Dashboard:** Presents verification statistics, verdict distribution, charts, and an overall factuality score.
 - **CSV Report Export:** Allows users to download the complete fact-checking results for further analysis.
 - **Built-in Sample Document:** Includes a sample PDF so users can test the application without uploading their own document.
@@ -26,8 +28,8 @@ TruthLayer AI follows a multi-stage verification pipeline:
 
 1. **Document Upload:** The user uploads a text-based PDF or selects the built-in sample document.
 2. **Text Extraction:** PyMuPDF extracts the document's text while preserving page-level information.
-3. **Claim Identification:** Gemini identifies factual statements that can be independently verified.
-4. **Evidence Retrieval:** Tavily searches the web for relevant information related to each extracted claim.
+3. **Claim Identification:** Gemini identifies factual statements that can be independently verified. The document is processed in page-labeled chunks, and each returned verbatim sentence is matched against the extracted PDF text to validate or correct its page number.
+4. **Evidence Retrieval:** Tavily searches from supporting and contradicting angles for each extracted claim and retains result URLs, excerpts, search angle, and publication dates when the API provides them.
 5. **AI Verification:** Gemini evaluates the retrieved evidence and determines the accuracy of each claim.
 6. **Results & Reporting:** The application displays verdicts, explanations, corrections, source links, analytics, and downloadable CSV reports.
 
