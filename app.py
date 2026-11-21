@@ -1,6 +1,7 @@
 """TruthLayer AI: Enterprise-Grade AI-Powered Fact-Check Agent web application."""
 
 import os
+import hashlib
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 import pandas as pd
@@ -10,6 +11,7 @@ import streamlit as st
 from pdf_processor import extract_text_from_pdf, PDFProcessingError
 from claim_extractor import extract_claims
 from fact_checker import verify_claims_batch
+from pdf_highlighter import annotate_problematic_claims, render_pdf_page
 
 # Page configuration
 st.set_page_config(
@@ -548,7 +550,7 @@ max_claims_setting = st.sidebar.slider(
 )
 
 if st.sidebar.button("🔄 Reset / Clear Session"):
-    for k in ["results", "claims", "doc_name", "pdf_bytes"]:
+    for k in ["results", "claims", "doc_name", "pdf_bytes", "active_doc_digest", "highlighted_pdf_bytes", "highlight_summary", "highlight_error"]:
         if k in st.session_state:
             del st.session_state[k]
     st.rerun()
@@ -592,14 +594,24 @@ with col_demo:
 # Set active document source
 active_pdf_data = None
 active_doc_name = None
+active_pdf_bytes = None
 
 if uploaded_file is not None:
     active_pdf_data = uploaded_file
+    active_pdf_bytes = uploaded_file.getvalue()
     active_doc_name = uploaded_file.name
     st.session_state["doc_name"] = uploaded_file.name
 elif "pdf_bytes" in st.session_state and st.session_state["pdf_bytes"]:
     active_pdf_data = st.session_state["pdf_bytes"]
+    active_pdf_bytes = bytes(active_pdf_data)
     active_doc_name = st.session_state.get("doc_name", "sample_document.pdf")
+
+if active_pdf_bytes is not None:
+    active_doc_digest = hashlib.sha256(active_pdf_bytes).hexdigest()
+    if st.session_state.get("active_doc_digest") != active_doc_digest:
+        for key in ["results", "claims", "highlighted_pdf_bytes", "highlight_summary", "highlight_error"]:
+            st.session_state.pop(key, None)
+        st.session_state["active_doc_digest"] = active_doc_digest
 
 
 # --- WHAT HAPPENS TO YOUR DOCUMENTS (Feature Cards) ---
@@ -714,6 +726,15 @@ if active_pdf_data is not None:
 
             st.session_state["results"] = results
             st.session_state["claims"] = claims
+            st.session_state.pop("highlighted_pdf_bytes", None)
+            st.session_state.pop("highlight_summary", None)
+            st.session_state.pop("highlight_error", None)
+            try:
+                highlighted_pdf, highlight_summary = annotate_problematic_claims(active_pdf_bytes, results)
+                st.session_state["highlighted_pdf_bytes"] = highlighted_pdf
+                st.session_state["highlight_summary"] = highlight_summary
+            except Exception as highlight_exc:
+                st.session_state["highlight_error"] = str(highlight_exc)
 
         except PDFProcessingError as pdf_err:
             st.error(f"❌ PDF Processing Error: {pdf_err}")
@@ -851,7 +872,8 @@ if "results" in st.session_state and st.session_state["results"]:
                 </div>
                 """, unsafe_allow_html=True)
 
-                st.markdown(f"**Document Statement:**\n> *\"{r['claim']}\"*")
+                st.markdown(f"**Original sentence (verbatim):**\n> {r.get('original_sentence', r['claim'])}")
+                st.markdown(f"**Claim checked:** {r['claim']}")
 
                 # Ground truth correction box with explicit contrast
                 if r.get("correct_fact") and r["correct_fact"] != "N/A":
@@ -867,11 +889,16 @@ if "results" in st.session_state and st.session_state["results"]:
                 sources = r.get("sources", [])
                 st.markdown("**🔗 Verified Evidence Sources:**")
                 if sources:
-                    source_html = " ".join([
-                        f'<a href="{url}" target="_blank" class="source-tag">🌐 {get_domain_from_url(url)}</a>'
-                        for url in sources
-                    ])
-                    st.markdown(source_html, unsafe_allow_html=True)
+                    details_by_url = {
+                        item.get("url"): item for item in r.get("source_details", [])
+                    }
+                    for url in sources:
+                        detail = details_by_url.get(url, {})
+                        title = detail.get("title") or get_domain_from_url(url)
+                        pub_date = detail.get("published_date") or "Publication date unavailable"
+                        angles = detail.get("evidence_angles", [])
+                        angle_label = f" · {' + '.join(a.title() for a in angles)} search" if angles else ""
+                        st.markdown(f"- [{title}]({url}) · {pub_date}{angle_label}")
                 else:
                     st.caption("No authoritative sources found for this assertion.")
 
@@ -900,13 +927,21 @@ if "results" in st.session_state and st.session_state["results"]:
 
         all_sources = []
         for r in results:
+            details_by_url = {
+                item.get("url"): item for item in r.get("source_details", [])
+            }
             for s in r.get("sources", []):
-                if s not in all_sources:
-                    all_sources.append(s)
+                if s not in [item["url"] for item in all_sources]:
+                    all_sources.append(details_by_url.get(s, {"url": s}))
 
         if all_sources:
-            for s_idx, src in enumerate(all_sources, start=1):
-                st.markdown(f"**{s_idx}.** [{src}]({src}) &nbsp; `({get_domain_from_url(src)})`")
+            for s_idx, source in enumerate(all_sources, start=1):
+                src = source["url"]
+                title = source.get("title") or get_domain_from_url(src)
+                pub_date = source.get("published_date") or "Publication date unavailable"
+                angles = source.get("evidence_angles", [])
+                angle_label = f" · {' + '.join(a.title() for a in angles)} search" if angles else ""
+                st.markdown(f"**{s_idx}.** [{title}]({src}) · {pub_date}{angle_label}")
         else:
             st.info("No external source URLs were retrieved for this document.")
 
@@ -918,13 +953,18 @@ if "results" in st.session_state and st.session_state["results"]:
         df_export = pd.DataFrame([
             {
                 "Claim Number": i,
+                "Original Sentence": r.get("original_sentence", r["claim"]),
                 "Original Claim": r["claim"],
                 "Page": r.get("page", 1),
                 "Category": r.get("category", ""),
                 "Audit Status": r["status"],
                 "Correct Information": r.get("correct_fact", "N/A"),
                 "Explanation": r.get("explanation", ""),
-                "Sources": " | ".join(r.get("sources", []))
+                "Sources": " | ".join(r.get("sources", [])),
+                "Source Details": " | ".join(
+                    f"{s.get('title') or s.get('url')} — {s.get('published_date') or 'Publication date unavailable'} — {' + '.join(s.get('evidence_angles', [])) or 'unclassified'}"
+                    for s in r.get("source_details", [])
+                )
             }
             for i, r in enumerate(results, start=1)
         ])
@@ -936,3 +976,56 @@ if "results" in st.session_state and st.session_state["results"]:
             file_name=f"truthlayer_audit_{doc_name}.csv",
             mime="text/csv"
         )
+
+    st.markdown("### Highlighted PDF review")
+    st.caption("Red marks False claims. Amber marks Inaccurate claims. Annotations in the downloaded PDF include the claim number and page.")
+    if st.session_state.get("highlight_error"):
+        st.error(f"Could not prepare PDF annotations: {st.session_state['highlight_error']}")
+    elif "highlighted_pdf_bytes" not in st.session_state:
+        st.info("Run the document audit to create highlighted PDF annotations.")
+    else:
+        highlighted_pdf = st.session_state["highlighted_pdf_bytes"]
+        highlight_summary = st.session_state.get("highlight_summary", {})
+        marked_pages = highlight_summary.get("pages", [])
+        st.download_button(
+            "Download highlighted PDF",
+            data=highlighted_pdf,
+            file_name=f"{os.path.splitext(doc_name)[0]}_highlighted.pdf",
+            mime="application/pdf",
+            icon=":material/download:",
+        )
+
+        if marked_pages:
+            details = highlight_summary.get("details", [])
+            page_counts = {
+                page_num: sum(1 for item in details if item["page"] == page_num)
+                for page_num in marked_pages
+            }
+            selected_page = st.selectbox(
+                "Page with highlighted claims",
+                marked_pages,
+                format_func=lambda page_num: f"Page {page_num} · {page_counts[page_num]} highlighted claim(s)",
+                key="highlighted_pdf_page",
+            )
+            for item in details:
+                if item["page"] == selected_page:
+                    st.markdown(f"**Claim #{item['claim_number']} · {item['status']}:** {item['claim']}")
+                    st.caption(f"Source sentence: {item['original_sentence']}")
+            st.image(
+                render_pdf_page(highlighted_pdf, selected_page),
+                alt=f"Page {selected_page} of the PDF with problematic claims highlighted",
+                caption=f"PDF page {selected_page} · Red: False · Amber: Inaccurate",
+                width="stretch",
+            )
+        else:
+            if highlight_summary.get("unmatched"):
+                st.info("No problematic sentences could be matched for highlighting. Review the unmatched claims below and use their page references to locate them manually.")
+            else:
+                st.success("No False or Inaccurate claims were found, so there are no passages to highlight.")
+
+        unmatched = highlight_summary.get("unmatched", [])
+        if unmatched:
+            st.warning(f"{len(unmatched)} problematic claim(s) could not be highlighted because the extracted sentence did not match the PDF text on its reported page.")
+            with st.expander("Claims needing manual review"):
+                for item in unmatched:
+                    st.write(f"Claim #{item['claim_number']} · Page {item['page']}: {item['reason']}")
