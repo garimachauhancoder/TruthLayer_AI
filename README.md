@@ -1,0 +1,235 @@
+# TruthLayer AI 🔍
+### AI-Powered Document Fact-Checking & Evidence Verification System
+
+TruthLayer AI is an intelligent fact-checking application that analyzes PDF documents, extracts verifiable factual claims, and evaluates their accuracy using real-time web evidence and Google's Gemini AI.
+
+The application helps users identify potentially inaccurate information, validate factual statements, and understand the evidence behind each verdict through an interactive dashboard.
+
+---
+
+## 🚀 Key Features
+
+- **PDF Document Processing:** Extracts text from PDF documents page by page using PyMuPDF.
+- **AI-Powered Claim Extraction:** Uses Google Gemini to identify checkable claims, including statistics, dates, financial figures, and technical information.
+- **Real-Time Evidence Search:** Uses Tavily Search API to retrieve relevant web evidence for individual claims.
+- **Automated Fact Verification:** Evaluates retrieved evidence using Gemini and generates an appropriate verdict.
+- **Source Attribution:** Displays supporting source links and original PDF page references.
+- **Interactive Analytics Dashboard:** Presents verification statistics, verdict distribution, charts, and an overall factuality score.
+- **CSV Report Export:** Allows users to download the complete fact-checking results for further analysis.
+- **Built-in Sample Document:** Includes a sample PDF so users can test the application without uploading their own document.
+
+---
+
+## ⚙️ How It Works
+
+TruthLayer AI follows a multi-stage verification pipeline:
+
+1. **Document Upload:** The user uploads a text-based PDF or selects the built-in sample document.
+2. **Text Extraction:** PyMuPDF extracts the document's text while preserving page-level information.
+3. **Claim Identification:** Gemini identifies factual statements that can be independently verified.
+4. **Evidence Retrieval:** Tavily searches the web for relevant information related to each extracted claim.
+5. **AI Verification:** Gemini evaluates the retrieved evidence and determines the accuracy of each claim.
+6. **Results & Reporting:** The application displays verdicts, explanations, corrections, source links, analytics, and downloadable CSV reports.
+
+### System Workflow
+
+```text
+       PDF Document
+             |
+             ▼
+      Text Extraction
+        (PyMuPDF)
+             |
+             ▼
+     AI Claim Extraction
+         (Gemini)
+             |
+             ▼
+      Web Evidence Search
+         (Tavily)
+             |
+             ▼
+      Evidence Evaluation
+         (Gemini)
+             |
+             ▼
+      Verification Results
+             |
+       ┌─────┴─────┐
+       ▼           ▼
+   Dashboard    CSV Report
+```
+
+---
+
+## 📊 Verification Categories
+
+Each extracted claim is assigned one of four verification verdicts:
+
+| Verdict | Description |
+|---|---|
+| Verified | Available evidence supports the claim. |
+| Inaccurate | The claim contains incorrect or misleading details. |
+| False | Available evidence contradicts the claim. |
+| Insufficient Evidence | Available evidence is insufficient to reach a reliable conclusion. |
+
+**Important:** Lack of supporting evidence does not automatically mean a claim is false. TruthLayer AI uses the Insufficient Evidence category when the available information is inconclusive.
+
+---
+
+## 🛠️ Technology Stack
+
+| Technology | Purpose |
+|---|---|
+| Python | Core application development |
+| Streamlit | Interactive web interface and dashboard |
+| Google Gemini AI | Claim extraction and evidence evaluation |
+| Tavily API | Real-time web search and evidence retrieval |
+| PyMuPDF | PDF text extraction |
+| Pandas | Result processing and CSV export |
+| Plotly | Interactive charts and visual analytics |
+
+---
+
+## 📁 Project Structure
+
+```text
+factcheck-agent/
+│
+├── .streamlit/
+│   └── config.toml
+│
+├── app.py                 # Main Streamlit application
+├── ai_client.py           # Gemini and Vertex AI configuration
+├── claim_extractor.py     # Factual claim extraction
+├── fact_checker.py        # Evidence assessment and verdicts
+├── factcheck.py           # Fact-checking utilities
+├── pdf_processor.py       # PDF text extraction
+├── web_search.py          # Tavily web search integration
+│
+├── requirements.txt       # Python dependencies
+├── .env.example           # Environment variable template
+├── .gitignore             # Git ignored files
+└── README.md              # Project documentation
+```
+
+---
+
+## 💻 Installation & Setup
+
+### Prerequisites
+
+- Python 3.10 or newer
+- Google Gemini API Key
+- Tavily API Key
+- Internet connection
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/garimachauhancoder/Fact_Checking_Web_App.git
+```
+
+### 2. Navigate to the Project Directory
+
+```bash
+cd Fact_Checking_Web_App
+```
+
+### 3. Create a Virtual Environment
+
+```bash
+python -m venv .venv
+```
+
+### 4. Activate the Virtual Environment
+
+**For Windows (Git Bash):**
+
+```bash
+source .venv/Scripts/activate
+```
+
+**For Windows (PowerShell):**
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+### 5. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 6. Configure API Keys
+
+Create a `.env` file in the project root directory using `.env.example` as a template.
+
+Add your API credentials:
+
+```env
+GEMINI_API_KEY=your_gemini_api_key
+TAVILY_API_KEY=your_tavily_api_key
+```
+
+Alternatively, configure the credentials through Streamlit secrets.
+
+**Note:** Never commit your actual API keys or `.env` file to GitHub.
+
+### 7. Run the Application
+
+```bash
+streamlit run app.py
+```
+
+Open the local URL displayed in your terminal. By default:
+
+```text
+http://localhost:8501
+```
+
+---
+
+## 🔧 Configuration
+
+TruthLayer AI supports the following optional configurations:
+
+| Variable | Description | Default |
+|---|---|---|
+| GEMINI_MODEL | Specifies the Gemini model | gemini-2.5-flash |
+| VERTEX_LOCATION | Vertex AI deployment location | us-central1 |
+| GOOGLE_API_KEY | Alternative Gemini API key variable | Not set |
+
+The application attempts to initialize Vertex AI when supported service account credentials are available. If the Vertex AI request fails, the AI client attempts to use the Gemini API fallback.
+
+A Gemini API key and Tavily API key are still required to enable document auditing through the application interface.
+
+---
+
+## 📄 Document Limitations
+
+- Supports text-based PDF documents.
+- Scanned or image-only PDFs without extractable text are not currently supported.
+- Verification quality depends on the relevance, availability, and reliability of retrieved web evidence.
+- AI-generated verdicts should be treated as decision-support information and independently reviewed for critical use cases.
+
+---
+
+## 🎯 Project Objective
+
+The objective of TruthLayer AI is to simplify document-level fact verification by combining artificial intelligence, automated claim extraction, and real-time web evidence retrieval.
+
+By bringing these capabilities together in a single application, the system helps users examine factual statements, identify inconsistencies, and make more informed decisions based on available evidence.
+
+---
+
+## 👩‍💻 Author
+
+**Developed as an AI-powered fact-checking project.**
+
+GitHub: [garimachauhancoder](https://github.com/garimachauhancoder)
+
+---
+
+⭐ If you find this project interesting, consider giving the repository a star!

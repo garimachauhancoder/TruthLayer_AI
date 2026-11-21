@@ -1,0 +1,7 @@
+streamlit>=1.40.0
+pymupdf>=2.1.0
+google-genai>=0.1.0
+google-auth>=2.0.0
+tavily-python>=0.5.0
+pandas>=2.0.0
+python-dotenv>=1.0.0

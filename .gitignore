@@ -1,0 +1,13 @@
+.streamlit/secrets.toml
+__pycache__/
+.venv/
+.env
+vertex_credentials.json
+vertex_creds.json
+service_account.json
+.env.*
+!.env.example
+
+.env
+vertex_creds.json
+.venv/
