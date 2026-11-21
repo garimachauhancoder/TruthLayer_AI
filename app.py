@@ -6,6 +6,7 @@ import textwrap
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 import pandas as pd
+import altair as alt
 import pymupdf
 import streamlit as st
 
@@ -499,6 +500,11 @@ def get_domain_from_url(url: str) -> str:
         return url
 
 
+def _open_highlighted_review(audit_id: str) -> None:
+    """Reveal the selected PDF preview after its download button is clicked."""
+    st.session_state["open_highlighted_review_for"] = audit_id
+
+
 # --- Background Key & Engine Resolution ---
 env_gemini_key, env_tavily_key = get_api_keys()
 gemini_api_key = env_gemini_key
@@ -607,7 +613,7 @@ max_claims_setting = st.sidebar.slider(
 )
 
 if st.sidebar.button("🔄 Reset / Clear Session"):
-    for k in ["results", "claims", "doc_name", "sample_doc_name", "pdf_bytes", "active_doc_digest", "highlighted_pdf_bytes", "highlight_summary", "highlight_error", "report_pdf_bytes", "report_pdf_error", "document_audits", "document_audit_errors", "selected_audit_id"]:
+    for k in ["results", "claims", "doc_name", "sample_doc_name", "pdf_bytes", "active_doc_digest", "highlighted_pdf_bytes", "highlight_summary", "highlight_error", "report_pdf_bytes", "report_pdf_error", "document_audits", "document_audit_errors", "selected_audit_id", "open_highlighted_review_for"]:
         if k in st.session_state:
             del st.session_state[k]
     st.rerun()
@@ -618,44 +624,6 @@ st.sidebar.caption("🛡️ TruthLayer AI &bull; Strict Grounding &bull; Zero Ha
 # --- Main Application Header ---
 st.markdown('<div class="page-title">Document Verification Hub</div>', unsafe_allow_html=True)
 st.markdown('<div class="page-subtitle">Upload any research paper, earnings release, news report, or whitepaper to extract checkable factual claims and audit them against live web ground truth.</div>', unsafe_allow_html=True)
-
-# Missing Key Alert Banner
-has_ai = bool(gemini_api_key)
-if not has_ai or not tavily_api_key:
-    missing_items = []
-    if not has_ai:
-        missing_items.append("**Gemini API Key**")
-    if not tavily_api_key:
-        missing_items.append("**Tavily API Key** ([Get free key](https://tavily.com/))")
-
-    st.warning(f"🔑 **Configuration Notice:** Please add your {' and '.join(missing_items)} in `.env` to enable live fact-checking.")
-
-
-# --- Document Input Section (Upload or Demo Sample) ---
-col_upload, col_demo = st.columns([3, 1])
-
-with col_upload:
-    uploaded_files = st.file_uploader(
-        "Drop files here. Get extracted claims, live search verification, and audit reports with exact citations.",
-        type=["pdf"],
-        accept_multiple_files=True,
-        help="Upload one or more text-based PDF files."
-    )
-
-with col_demo:
-    st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-    if st.button("⚡ Try Sample Document", help="Click to load a pre-built 2-page tech & financial intelligence document"):
-        st.session_state["pdf_bytes"] = generate_sample_pdf()
-        st.session_state["sample_doc_name"] = "Sample_AI_Market_Briefing_2024.pdf"
-        st.toast("Sample PDF loaded! Click 'Analyze Document' below.", icon="📄")
-
-# Keep every selected PDF together with its original bytes for its own audit and report.
-active_documents = []
-if uploaded_files:
-    for uploaded_pdf in uploaded_files:
-        active_documents.append((uploaded_pdf.name, uploaded_pdf.getvalue()))
-elif st.session_state.get("pdf_bytes"):
-    active_documents.append((st.session_state.get("sample_doc_name", "sample_document.pdf"), bytes(st.session_state["pdf_bytes"])))
 
 # --- WHAT HAPPENS TO YOUR DOCUMENTS (Feature Cards) ---
 st.markdown('<div class="section-eyebrow">WHAT HAPPENS TO YOUR DOCUMENTS</div>', unsafe_allow_html=True)
@@ -706,6 +674,45 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+
+
+# Missing Key Alert Banner
+has_ai = bool(gemini_api_key)
+if not has_ai or not tavily_api_key:
+    missing_items = []
+    if not has_ai:
+        missing_items.append("**Gemini API Key**")
+    if not tavily_api_key:
+        missing_items.append("**Tavily API Key** ([Get free key](https://tavily.com/))")
+
+    st.warning(f"🔑 **Configuration Notice:** Please add your {' and '.join(missing_items)} in `.env` to enable live fact-checking.")
+
+
+# --- Document Input Section (Upload or Demo Sample) ---
+col_upload, col_demo = st.columns([3, 1])
+
+with col_upload:
+    uploaded_files = st.file_uploader(
+        "Drop files here. Get extracted claims, live search verification, and audit reports with exact citations.",
+        type=["pdf"],
+        accept_multiple_files=True,
+        help="Upload one or more text-based PDF files."
+    )
+
+with col_demo:
+    st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+    if st.button("⚡ Try Sample Document", help="Click to load a pre-built 2-page tech & financial intelligence document"):
+        st.session_state["pdf_bytes"] = generate_sample_pdf()
+        st.session_state["sample_doc_name"] = "Sample_AI_Market_Briefing_2024.pdf"
+        st.toast("Sample PDF loaded! Click 'Analyze Document' below.", icon="📄")
+
+# Keep every selected PDF together with its original bytes for its own audit and report.
+active_documents = []
+if uploaded_files:
+    for uploaded_pdf in uploaded_files:
+        active_documents.append((uploaded_pdf.name, uploaded_pdf.getvalue()))
+elif st.session_state.get("pdf_bytes"):
+    active_documents.append((st.session_state.get("sample_doc_name", "sample_document.pdf"), bytes(st.session_state["pdf_bytes"])))
 
 # --- Multi-document audit action ---
 if active_documents:
@@ -975,9 +982,28 @@ if document_audits and st.session_state.get("results"):
         chart_df = pd.DataFrame({
             "Status": ["Verified", "Inaccurate", "False", "Insufficient Evidence"],
             "Count": [n_verified, n_inaccurate, n_false, n_insufficient]
-        }).set_index("Status")
-
-        st.bar_chart(chart_df, color="#0284c7")
+        })
+        status_order = ["False", "Inaccurate", "Insufficient Evidence", "Verified"]
+        distribution_chart = (
+            alt.Chart(chart_df)
+            .mark_bar(color="#0284c7")
+            .encode(
+                x=alt.X(
+                    "Status:N",
+                    sort=status_order,
+                    axis=alt.Axis(labelAngle=0, labelOverlap=False, labelLimit=220),
+                    title=None,
+                ),
+                y=alt.Y("Count:Q", title="Claims", scale=alt.Scale(domainMin=0)),
+                tooltip=["Status:N", "Count:Q"],
+            )
+            .properties(height=320)
+        )
+        st.altair_chart(
+            distribution_chart,
+            alt="Claim counts by verification status",
+            width="stretch",
+        )
 
         st.markdown("#### Audit Diagnosis")
         if n_false > 0:
@@ -1070,55 +1096,61 @@ if document_audits and st.session_state.get("results"):
         else:
             st.error(f"Could not generate the PDF report: {report_pdf_error}")
 
-    st.markdown("### Highlighted PDF review")
-    st.caption("Red marks False claims. Amber marks Inaccurate claims. Annotations in the downloaded PDF include the claim number and page.")
-    if st.session_state.get("highlight_error"):
-        st.error(f"Could not prepare PDF annotations: {st.session_state['highlight_error']}")
-    elif "highlighted_pdf_bytes" not in st.session_state:
-        st.info("Run the document audit to create highlighted PDF annotations.")
-    else:
-        highlighted_pdf = st.session_state["highlighted_pdf_bytes"]
-        highlight_summary = st.session_state.get("highlight_summary", {})
-        marked_pages = highlight_summary.get("pages", [])
-        st.download_button(
-            "Download highlighted PDF",
-            data=highlighted_pdf,
-            file_name=f"{os.path.splitext(doc_name)[0]}_highlighted.pdf",
-            mime="application/pdf",
-            icon=":material/download:",
-        )
-
-        if marked_pages:
-            details = highlight_summary.get("details", [])
-            page_counts = {
-                page_num: sum(1 for item in details if item["page"] == page_num)
-                for page_num in marked_pages
-            }
-            selected_page = st.selectbox(
-                "Page with highlighted claims",
-                marked_pages,
-                format_func=lambda page_num: f"Page {page_num} · {page_counts[page_num]} highlighted claim(s)",
-                key="highlighted_pdf_page",
-            )
-            for item in details:
-                if item["page"] == selected_page:
-                    st.markdown(f"**Claim #{item['claim_number']} · {item['status']}:** {item['claim']}")
-                    st.caption(f"Source sentence: {item['original_sentence']}")
-            st.image(
-                render_pdf_page(highlighted_pdf, selected_page),
-                alt=f"Page {selected_page} of the PDF with problematic claims highlighted",
-                caption=f"PDF page {selected_page} · Red: False · Amber: Inaccurate",
-                width="stretch",
-            )
+    with tab_export:
+        if st.session_state.get("highlight_error"):
+            st.error(f"Could not prepare PDF annotations: {st.session_state['highlight_error']}")
+        elif "highlighted_pdf_bytes" not in st.session_state:
+            st.info("Run the document audit to create highlighted PDF annotations.")
         else:
-            if highlight_summary.get("unmatched"):
-                st.info("No problematic sentences could be matched for highlighting. Review the unmatched claims below and use their page references to locate them manually.")
-            else:
-                st.success("No False or Inaccurate claims were found, so there are no passages to highlight.")
+            highlighted_pdf = st.session_state["highlighted_pdf_bytes"]
+            highlight_summary = st.session_state.get("highlight_summary", {})
+            marked_pages = highlight_summary.get("pages", [])
+            st.download_button(
+                "Download highlighted PDF",
+                data=highlighted_pdf,
+                file_name=f"{os.path.splitext(doc_name)[0]}_highlighted.pdf",
+                mime="application/pdf",
+                icon=":material/download:",
+                key=f"download_highlighted_pdf_{selected_audit_id}",
+                on_click=_open_highlighted_review,
+                args=(selected_audit_id,),
+            )
 
-        unmatched = highlight_summary.get("unmatched", [])
-        if unmatched:
-            st.warning(f"{len(unmatched)} problematic claim(s) could not be highlighted because the extracted sentence did not match the PDF text on its reported page.")
-            with st.expander("Claims needing manual review"):
-                for item in unmatched:
-                    st.write(f"Claim #{item['claim_number']} · Page {item['page']}: {item['reason']}")
+            review_open = st.session_state.get("open_highlighted_review_for") == selected_audit_id
+            if review_open:
+                st.markdown("### Highlighted PDF review")
+                st.caption("Red marks False claims. Amber marks Inaccurate claims. The downloaded PDF includes claim numbers and page references.")
+                if marked_pages:
+                    details = highlight_summary.get("details", [])
+                    page_counts = {
+                        page_num: sum(1 for item in details if item["page"] == page_num)
+                        for page_num in marked_pages
+                    }
+                    selected_page = st.selectbox(
+                        "Page with highlighted claims",
+                        marked_pages,
+                        format_func=lambda page_num: f"Page {page_num} · {page_counts[page_num]} highlighted claim(s)",
+                        key="highlighted_pdf_page",
+                    )
+                    for item in details:
+                        if item["page"] == selected_page:
+                            st.markdown(f"**Claim #{item['claim_number']} · {item['status']}:** {item['claim']}")
+                            st.caption(f"Source sentence: {item['original_sentence']}")
+                    st.image(
+                        render_pdf_page(highlighted_pdf, selected_page),
+                        alt=f"Page {selected_page} of the PDF with problematic claims highlighted",
+                        caption=f"PDF page {selected_page} · Red: False · Amber: Inaccurate",
+                        width="stretch",
+                    )
+                else:
+                    if highlight_summary.get("unmatched"):
+                        st.info("No problematic sentences could be matched for highlighting. Review the unmatched claims below and use their page references to locate them manually.")
+                    else:
+                        st.success("No False or Inaccurate claims were found, so there are no passages to highlight.")
+
+                unmatched = highlight_summary.get("unmatched", [])
+                if unmatched:
+                    st.warning(f"{len(unmatched)} problematic claim(s) could not be highlighted because the extracted sentence did not match the PDF text on its reported page.")
+                    with st.expander("Claims needing manual review"):
+                        for item in unmatched:
+                            st.write(f"Claim #{item['claim_number']} · Page {item['page']}: {item['reason']}")
