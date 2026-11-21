@@ -32,7 +32,7 @@ TruthLayer AI follows a multi-stage verification pipeline:
 3. **Claim Identification:** Gemini identifies factual statements that can be independently verified. The document is processed in page-labeled chunks, and each returned verbatim sentence is matched against the extracted PDF text to validate or correct its page number.
 4. **Evidence Retrieval:** Tavily searches from supporting and contradicting angles for each extracted claim, adds news search results when general results lack publication dates, and retains result URLs, excerpts, search angle, topic, and dates when the API provides them.
 5. **AI Verification:** Gemini evaluates the retrieved evidence and determines the accuracy of each claim.
-6. **Results & Reporting:** The application displays verdicts, explanations, corrections, source links, analytics, and downloadable CSV reports.
+6. **Results & Reporting:** Choose an audited PDF to view its claims, analytics, highlights, and sources. Download its fact-check report as PDF or CSV, or download a separate annotated PDF. Reports include claims, verdicts, corrections, explanations, evidence excerpts, and source URLs; analytics remain in the dashboard.
 
 ### System Workflow
 
@@ -60,7 +60,8 @@ TruthLayer AI follows a multi-stage verification pipeline:
              |
        ┌─────┴─────┐
        ▼           ▼
-   Dashboard    CSV Report
+   Dashboard    PDF / CSV Reports
+                Highlighted PDF
 ```
 
 ---
@@ -88,7 +89,7 @@ Each extracted claim is assigned one of four verification verdicts:
 | Streamlit | Interactive web interface and dashboard |
 | Google Gemini AI | Claim extraction and evidence evaluation |
 | Tavily API | Real-time web search and evidence retrieval |
-| PyMuPDF | PDF text extraction |
+| PyMuPDF | PDF text extraction, annotation, preview, and report generation |
 | Pandas | Result processing and CSV export |
 | Plotly | Interactive charts and visual analytics |
 
@@ -108,6 +109,8 @@ factcheck-agent/
 ├── fact_checker.py        # Evidence assessment and verdicts
 ├── factcheck.py           # Fact-checking utilities
 ├── pdf_processor.py       # PDF text extraction
+├── pdf_highlighter.py     # In-PDF claim highlighting and page previews
+├── report_generator.py    # Paginated PDF fact-check report generation
 ├── web_search.py          # Tavily web search integration
 │
 ├── requirements.txt       # Python dependencies
@@ -204,7 +207,7 @@ TruthLayer AI supports the following optional configurations:
 | VERTEX_LOCATION | Vertex AI deployment location | us-central1 |
 | GOOGLE_API_KEY | Alternative Gemini API key variable | Not set |
 
-The application attempts to initialize Vertex AI when supported service account credentials are available. If the Vertex AI request fails, the AI client attempts to use the Gemini API fallback.
+The application uses the Gemini API when a Gemini API key is configured. If that request fails, it tries Vertex AI when service account credentials are available.
 
 A Gemini API key and Tavily API key are still required to enable document auditing through the application interface.
 
