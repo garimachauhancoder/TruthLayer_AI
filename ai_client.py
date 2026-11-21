@@ -1,4 +1,4 @@
-"""Multi-provider AI client supporting Vertex AI (Primary) and Gemini Developer API (Fallback)."""
+"""Multi-provider AI client supporting Gemini Developer API and Vertex AI."""
 
 import json
 import logging
@@ -80,7 +80,7 @@ def generate_content_with_fallback(
     system_instruction: str = ""
 ) -> tuple[str, str]:
     """
-    Generates content via Vertex AI (Primary) with automatic fallback to Gemini Developer API (Fallback).
+    Uses the Gemini Developer API when a key is configured, then tries Vertex AI.
     Supports Developer/System instructions seamlessly on both engines.
 
     Returns:
@@ -91,7 +91,24 @@ def generate_content_with_fallback(
         system_instruction=system_instruction if system_instruction else None
     )
 
-    # 1. Attempt generation with Vertex AI (Enterprise Cloud endpoint)
+    cleaned_key = (gemini_api_key or os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")).strip().strip("'\"")
+
+    # Prefer the configured Gemini key; local Vertex credentials may belong to
+    # another project and should not silently take precedence.
+    gemini_client = get_gemini_api_client(cleaned_key)
+    gemini_error = None
+    if gemini_client:
+        try:
+            response = gemini_client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=config
+            )
+            return response.text or "", "Gemini API"
+        except Exception as exc:
+            gemini_error = exc
+            logger.warning(f"Gemini API request failed, trying Vertex AI: {exc}")
+
     vertex_client = get_vertex_client()
     if vertex_client:
         try:
@@ -100,22 +117,16 @@ def generate_content_with_fallback(
                 contents=prompt,
                 config=config
             )
-            return response.text or "", "Vertex AI (ml-odio)"
+            return response.text or "", "Vertex AI"
         except Exception as vertex_err:
-            logger.warning(f"Vertex AI request failed, falling back to Gemini API: {vertex_err}")
+            logger.error(f"Vertex AI request also failed: {vertex_err}")
+            if gemini_error:
+                raise RuntimeError(
+                    f"AI generation failed on Gemini API and Vertex AI. Gemini: {gemini_error}; Vertex: {vertex_err}"
+                ) from vertex_err
+            raise RuntimeError(f"AI generation failed on Vertex AI: {vertex_err}") from vertex_err
 
-    # 2. Fallback to Gemini Developer API (AI Studio key on v1beta)
-    gemini_client = get_gemini_api_client(gemini_api_key)
-    if gemini_client:
-        try:
-            response = gemini_client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=config
-            )
-            return response.text or "", "Gemini API (Fallback)"
-        except Exception as gemini_err:
-            logger.error(f"Gemini API fallback request also failed: {gemini_err}")
-            raise RuntimeError(f"AI generation failed on both Vertex AI and Gemini API: {gemini_err}") from gemini_err
+    if gemini_error:
+        raise RuntimeError(f"Gemini API request failed: {gemini_error}") from gemini_error
 
     raise RuntimeError("No valid AI credentials found. Please provide Vertex credentials or GEMINI_API_KEY.")
