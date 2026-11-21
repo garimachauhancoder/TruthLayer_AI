@@ -130,6 +130,9 @@ SEARCH RESULT METADATA (including publication dates when provided):
 AVAILABLE SOURCE URLS:
 {json.dumps(search_result.sources, indent=2)}
 
+SEARCH WARNINGS:
+{json.dumps(search_result.warnings, ensure_ascii=False)}
+
 ---
 EVALUATE AND RESPOND:
 Return ONLY the JSON object with fields "status", "explanation", "correct_fact", and "sources"."""
@@ -183,6 +186,7 @@ Return ONLY the JSON object with fields "status", "explanation", "correct_fact",
             "explanation": explanation,
             "correct_fact": correct_fact,
             "sources": validated_sources,
+            "search_warnings": search_result.warnings,
             "source_details": [
                 detail for detail in search_result.source_details
                 if detail.get("url") in validated_sources
