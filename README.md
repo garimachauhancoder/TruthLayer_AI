@@ -189,12 +189,6 @@ Alternatively, configure the credentials through Streamlit secrets.
 streamlit run app.py
 ```
 
-Open the local URL displayed in your terminal. By default:
-
-```text
-http://localhost:8501
-```
-
 ---
 
 ## 🔧 Configuration
