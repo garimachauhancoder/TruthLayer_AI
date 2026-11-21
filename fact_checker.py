@@ -20,6 +20,8 @@ Rules for classification:
 - "Insufficient Evidence": The search results do not provide enough specific, verifiable facts to definitively prove or disprove the claim. DO NOT label a claim False merely because evidence is missing or inconclusive.
 
 CRITICAL INSTRUCTIONS ON SOURCES:
+- Search evidence includes separate supporting and contradicting search angles. Consider both; a search angle alone is not proof.
+- Use publication dates when available to judge whether evidence is current. Treat missing dates as unknown; do not invent them.
 - Only cite URLs that appear in the provided search evidence.
 - NEVER invent, extrapolate, or hallucinate URLs.
 - If evidence is insufficient, leave the sources list empty [].
@@ -75,6 +77,7 @@ def verify_single_claim(
         correct fact, and validated sources.
     """
     claim_text = claim_item["claim"]
+    original_sentence = claim_item.get("original_sentence", claim_text)
     page_num = claim_item.get("page", 1)
     category = claim_item.get("category", "factual_statement")
 
@@ -87,6 +90,7 @@ def verify_single_claim(
     if search_result.error:
         return {
             "claim": claim_text,
+            "original_sentence": original_sentence,
             "page": page_num,
             "category": category,
             "status": "Insufficient Evidence",
@@ -99,6 +103,7 @@ def verify_single_claim(
     if not search_result.results or not search_result.context.strip():
         return {
             "claim": claim_text,
+            "original_sentence": original_sentence,
             "page": page_num,
             "category": category,
             "status": "Insufficient Evidence",
@@ -118,6 +123,9 @@ ORIGINAL CLAIM (From Page {page_num}):
 
 LIVE WEB SEARCH EVIDENCE (From Tavily):
 {search_result.context}
+
+SEARCH RESULT METADATA (including publication dates when provided):
+{json.dumps(search_result.source_details, ensure_ascii=False, indent=2)}
 
 AVAILABLE SOURCE URLS:
 {json.dumps(search_result.sources, indent=2)}
@@ -168,17 +176,23 @@ Return ONLY the JSON object with fields "status", "explanation", "correct_fact",
 
         return {
             "claim": claim_text,
+            "original_sentence": original_sentence,
             "page": page_num,
             "category": category,
             "status": status,
             "explanation": explanation,
             "correct_fact": correct_fact,
-            "sources": validated_sources
+            "sources": validated_sources,
+            "source_details": [
+                detail for detail in search_result.source_details
+                if detail.get("url") in validated_sources
+            ]
         }
 
     except Exception as exc:
         return {
             "claim": claim_text,
+            "original_sentence": original_sentence,
             "page": page_num,
             "category": category,
             "status": "Insufficient Evidence",
